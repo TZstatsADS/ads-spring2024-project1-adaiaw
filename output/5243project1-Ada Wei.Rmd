@@ -1,0 +1,503 @@
+---
+title: "What makes females and males happy in different life stages?"
+output: html_document
+---
+
+#### This report aims to identify variations in the moments of happiness experienced by females and males across different stages of life. Specifically, we will examine three key stages: being single, married, and experiencing parenthood.
+
+This project utilizes data from the HappyDB, a corpus of 100,000 crowd-sourced happy moments via Amazon's Mechanical Turk. You can read more about it on https://arxiv.org/abs/1801.07746. Also, this project utilizes code provided by the ADS_Teaching team from Text_processing.rmd and HappyDB_RShiny.rmd.
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r load libraries, warning=FALSE, message=FALSE,echo=FALSE}
+library(tm)
+library(tidytext)
+library(tidyverse)
+library(DT)
+library(scales)
+library(wordcloud)
+library(gridExtra)
+library(ngram)
+library(shiny) 
+```
+
+
+
+
+```{r read data, warning=FALSE, message=FALSE,echo=FALSE}
+urlfile<-'https://raw.githubusercontent.com/rit-public/HappyDB/master/happydb/data/cleaned_hm.csv'
+hm_data <- read_csv(urlfile)
+```
+
+
+
+
+
+```{r text processing in tm,echo=FALSE}
+corpus <- VCorpus(VectorSource(hm_data$cleaned_hm))%>%
+  tm_map(content_transformer(tolower))%>%
+  tm_map(removePunctuation)%>%
+  tm_map(removeNumbers)%>%
+  tm_map(removeWords, character(0))%>%
+  tm_map(stripWhitespace)
+```
+
+
+
+```{r stemming,echo=FALSE}
+stemmed <- tm_map(corpus, stemDocument) %>%
+  tidy() %>%
+  select(text)
+```
+
+
+```{r tidy dictionary,echo=FALSE,warning=FALSE}
+dict <- tidy(corpus) %>%
+  select(text) %>%
+  unnest_tokens(dictionary, text)
+```
+
+
+
+```{r stopwords,echo=FALSE}
+data("stop_words")
+
+word <- c("happy","ago","yesterday","lot","today","months","month",
+                 "happier","happiest","last","week","past","day","time")
+
+stop_words <- stop_words %>%
+  bind_rows(mutate(tibble(word), lexicon = "updated"))
+```
+
+
+
+```{r tidy stems with dictionary,echo=FALSE,warning=FALSE}
+completed <- stemmed %>%
+  mutate(id = row_number()) %>%
+  unnest_tokens(stems, text) %>%
+  bind_cols(dict) %>%
+  anti_join(stop_words, by = c("dictionary" = "word"))
+```
+
+
+```{r stem completion, warning=FALSE, message=FALSE,echo=FALSE}
+completed <- completed %>%
+  group_by(stems) %>%
+  count(dictionary) %>%
+  mutate(word = dictionary[which.max(n)]) %>%
+  ungroup() %>%
+  select(stems, word) %>%
+  distinct() %>%
+  right_join(completed) %>%
+  select(-stems)
+```
+
+
+
+```{r reverse unnest,echo=FALSE}
+completed <- completed %>%
+  group_by(id) %>%
+  summarise(text = str_c(word, collapse = " ")) %>%
+  ungroup()
+```
+
+
+
+```{r cleaned hm_data, warning=FALSE, message=FALSE,echo=FALSE,include=FALSE}
+hm_data <- hm_data %>%
+  mutate(id = row_number()) %>%
+  inner_join(completed)
+
+datatable(hm_data)
+```
+
+
+```{r export data,echo=FALSE}
+write_csv(hm_data, "../output/processed_moments.csv")
+```
+
+
+```{r load data, warning=FALSE, message=FALSE,echo=FALSE}
+hm_data <- read_csv("../output/processed_moments.csv")
+
+urlfile<-'https://raw.githubusercontent.com/rit-public/HappyDB/master/happydb/data/demographic.csv'
+demo_data <- read_csv(urlfile)
+```
+
+
+
+```{r combining data, warning=FALSE, message=FALSE,echo=FALSE}
+hm_data <- hm_data %>%
+  inner_join(demo_data, by = "wid") %>%
+  select(wid,
+         original_hm,
+         gender, 
+         marital, 
+         parenthood,
+         reflection_period,
+         age, 
+         country, 
+         ground_truth_category, 
+         text) %>%
+  mutate(count = sapply(hm_data$text, wordcount)) %>%
+  filter(gender %in% c("m", "f")) %>%
+  filter(marital %in% c("single", "married")) %>%
+  filter(parenthood %in% c("n", "y")) %>%
+  filter(reflection_period %in% c("24h", "3m")) %>%
+  mutate(reflection_period = fct_recode(reflection_period, 
+                                        months_3 = "3m", hours_24 = "24h"))
+```
+
+
+```{r,echo=FALSE,include=FALSE}
+datatable(hm_data)
+```
+
+
+
+
+
+Before diving into the first stage, let's first explore what generally brings happiness to females and males.
+
+```{r,echo=FALSE}
+hm_data_female <- hm_data[hm_data$gender=="f",]
+hm_data_male <- hm_data[hm_data$gender=="m",]
+
+```
+
+
+```{r,echo=FALSE}
+bag_of_words_female <-  hm_data_female %>%
+  unnest_tokens(word, text)
+
+word_count_female <- bag_of_words_female %>%
+  count(word, sort = TRUE)
+
+bag_of_words_male <-  hm_data_male %>%
+  unnest_tokens(word, text)
+
+word_count_male <- bag_of_words_male %>%
+  count(word, sort = TRUE)
+```
+
+
+We created two word clouds to explore the happiest moments commonly mentioned by females and males.
+
+```{r,message=FALSE,warning=FALSE,echo=FALSE}
+wordcloud(word_count_female$word,word_count_female$n ,
+          scale=c(3,0.1),
+          max.words=100,
+          min.freq=1,
+          random.order=FALSE,
+          rot.per=0.3,
+          use.r.layout=T,
+          random.color=FALSE,
+          colors=brewer.pal(9,"Reds"))
+
+```
+
+```{r,message=FALSE,warning=FALSE,echo=FALSE}
+wordcloud(word_count_male$word,word_count_male$n ,
+          scale=c(3,0.1),
+          max.words=100,
+          min.freq=1,
+          random.order=FALSE,
+          rot.per=0.3,
+          use.r.layout=T,
+          random.color=FALSE,
+          colors=brewer.pal(9,"Blues"))
+
+```
+
+
+Checking out the word clouds representing happiness moments for both females and males, one thing jumps out loud and clear is the word “friend”. It seems like spending quality time with friends is a real happiness booster for everyone, regardless of gender.
+
+And in the female word cloud, right after "friend," there it is “husband”. Looks like having a supportive partner is another big source of joy for many women.
+
+\
+\
+
+
+Now, let’s take a closer look at when females and males are single.
+
+
+## Question 1: What makes females and males happy when they are single?
+
+
+
+```{r, warning=FALSE, message=FALSE,echo=FALSE}
+hm_data_female_single <- hm_data[hm_data$gender=="f" & hm_data$marital=="single",]
+hm_data_male_single <- hm_data[hm_data$gender=="m" & hm_data$marital=="single",]
+
+```
+
+
+```{r, warning=FALSE, message=FALSE,echo=FALSE}
+bag_of_words_female_single <-  hm_data_female_single %>%
+  unnest_tokens(word, text)
+
+word_count_female_single <- bag_of_words_female_single %>%
+  count(word, sort = TRUE)
+
+bag_of_words_male_single <-  hm_data_male_single %>%
+  unnest_tokens(word, text)
+
+word_count_male_single <- bag_of_words_male_single %>%
+  count(word, sort = TRUE)
+
+```
+
+
+
+We created two words frequency bar charts to explore the happiest moments commonly mentioned by single females and males.
+
+
+
+```{r, warning=FALSE, message=FALSE,echo=FALSE}
+ word_count_female_single[1:15,] %>%
+      mutate(word = reorder(word, n)) %>%
+      ggplot(aes(word, n)) +
+      geom_col() +
+      labs(title = "Word Frequency in Happy Moments for Single Females")+
+      xlab(NULL) +
+      ylab("Word Frequency")+
+      coord_flip()
+
+```
+
+\
+\
+
+
+
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+ word_count_male_single[1:15,] %>%
+      mutate(word = reorder(word, n)) %>%
+      ggplot(aes(word, n)) +
+      geom_col() +
+      labs(title ="Word Frequency in Happy Moments for Single Males")+
+      xlab(NULL) +
+      ylab("Word Frequency")+
+      coord_flip()
+``` 
+ 
+
+
+
+Comparing the findings from the first two word clouds, it's clear that aside from "friend," the word "boyfriend" holds significant weight for females. Similarly, for males, "girlfriend" emerges as a crucial factor in their happiness. 
+
+However, there's an interesting finding – the word "game" appears before "girlfriend" in the male words frequency bar chart. This suggests that for guys, engaging in video games might prioritize over spending time with their significant others. It's a curious insight into how different activities can bring joy to individuals, even within the context of romantic relationships.
+
+\
+\
+\
+
+
+Now, let’s see if there are any changes when females and males are married.
+
+## Question 2: What makes females and males happy when they are married?
+
+
+```{r, warning=FALSE, message=FALSE,echo=FALSE}
+hm_data_female_married <- hm_data[hm_data$gender=="f" & hm_data$marital=="married",]
+hm_data_male_married <- hm_data[hm_data$gender=="m" & hm_data$marital=="married",]
+
+```
+
+
+```{r,echo=FALSE}
+bag_of_words_female_married <-  hm_data_female_married %>%
+  unnest_tokens(word, text)
+
+word_count_female_married <- bag_of_words_female_married %>%
+  count(word, sort = TRUE)
+
+bag_of_words_male_married <-  hm_data_male_married %>%
+  unnest_tokens(word, text)
+
+word_count_male_married <- bag_of_words_male_married %>%
+  count(word, sort = TRUE)
+
+
+```
+
+
+
+We created word proportion plots for both females and males, both with and without marital status taken into account.
+
+
+
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+temp <- bag_of_words_female %>%
+      count(marital, word) %>%
+      group_by(marital) %>%
+      mutate(proportion = n / sum(n)) %>% 
+      select(-n) %>% 
+      spread(marital, proportion)
+ggplot(temp, 
+             aes_string(x = colnames(temp)[2], y = colnames(temp)[3]),
+             color = abs(colnames(temp)[3] - colnames(temp)[2])) +
+      geom_abline(color = "gray40", lty = 2) +
+      geom_jitter(alpha = 0.1, size = 1, width = 0.3, height = 0.3) +
+  labs(title="Words Proportion for females with/without marital")+
+      geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+      scale_x_log10(labels = percent_format()) +
+      scale_y_log10(labels = percent_format()) +
+      scale_color_gradient(limits = c(0, 0.001), low = "darkslategray4", high = "gray75") +
+      theme(legend.position="none")
+  
+```
+
+\
+\
+
+
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+temp <- bag_of_words_male %>%
+      count(marital, word) %>%
+      group_by(marital) %>%
+      mutate(proportion = n / sum(n)) %>% 
+      select(-n) %>% 
+      spread(marital, proportion)
+ggplot(temp, 
+             aes_string(x = colnames(temp)[2], y = colnames(temp)[3]),
+             color = abs(colnames(temp)[3] - colnames(temp)[2])) +
+      geom_abline(color = "gray40", lty = 2) +
+      geom_jitter(alpha = 0.1, size = 1, width = 0.3, height = 0.3) +
+  labs(title="Words Proportion for males with/without marital")+
+      geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+      scale_x_log10(labels = percent_format()) +
+      scale_y_log10(labels = percent_format()) +
+      scale_color_gradient(limits = c(0, 0.001), low = "darkslategray4", high = "gray75") +
+      theme(legend.position="none")
+  
+```
+
+\
+\
+
+Based on the plots above, it's evident that before marriage, the most prominent words are "boyfriend" and "girlfriend." However, after marriage, the focus shifts to words like "kids," "daughter," "son," "husband," and "wife." This illustrates a transition in happiness as marital status changes.
+
+We can gain further insight into this transition by looking at the next two bar charts. These charts will provide a closer look at how happiness evolves with changes in marital status.
+
+\
+\
+
+
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+ word_count_female_married[1:15,] %>%
+      mutate(word = reorder(word, n)) %>%
+      ggplot(aes(word, n)) +
+      geom_col() +
+      labs(title = "Word Frequency in Happy Moments for Married Females")+
+      xlab(NULL) +
+      ylab("Word Frequency")+
+      coord_flip()
+
+``` 
+\
+\
+
+
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+ word_count_male_married[1:15,] %>%
+      mutate(word = reorder(word, n)) %>%
+      ggplot(aes(word, n)) +
+      geom_col() +
+      labs(title ="Word Frequency in Happy Moments for Married Males")+
+      xlab(NULL) +
+      ylab("Word Frequency")+
+      coord_flip()
+
+``` 
+ 
+\
+\
+ 
+ 
+Looking at the bar charts, it's evident that for women, their husbands stand out as the primary source of happiness. Similarly, for men, their wives take the top spot in contributing to their joy. At this stage of life, it becomes clear that spouses hold a crucial importance, serving as not only life partners but also the primary source of happiness and fulfillment.
+
+Furthermore, it's interesting to note that words like "son" and "daughter" emerge prominently in the bar charts. This suggests that for married individuals, the presence and love of their children also play a significant role in their happiness.
+
+\
+\
+
+Now, let’s explore whether there are any shifts when females and males become parents.
+ 
+## Question 3: What makes females and males happy when they have children?
+
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+hm_data_female_parent <- hm_data[hm_data$gender=="f" & hm_data$parenthood=="y",]
+hm_data_male_parent <- hm_data[hm_data$gender=="m" & hm_data$parenthood=="y",]
+
+``` 
+
+```{r,echo=FALSE}
+bag_of_words_female_parent <-  hm_data_female_parent %>%
+  unnest_tokens(word, text)
+
+word_count_female_parent <- bag_of_words_female_parent %>%
+  count(word, sort = TRUE)
+
+bag_of_words_male_parent <-  hm_data_male_parent %>%
+  unnest_tokens(word, text)
+
+word_count_male_parent <- bag_of_words_male_parent %>%
+  count(word, sort = TRUE)
+
+
+```
+\
+Again, we created two words frequency bar charts to explore the happiest moments commonly mentioned by parents.
+
+
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+ word_count_female_parent[1:15,] %>%
+      mutate(word = reorder(word, n)) %>%
+      ggplot(aes(word, n)) +
+      geom_col() +
+      labs(title = "Word Frequency in Happy Moments for Females in Parenthood")+
+      xlab(NULL) +
+      ylab("Word Frequency")+
+      coord_flip()
+
+``` 
+\
+\
+
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+ word_count_male_parent[1:15,] %>%
+      mutate(word = reorder(word, n)) %>%
+      ggplot(aes(word, n)) +
+      geom_col() +
+      labs(title = "Word Frequency in Happy Moments for Males in Parenthood")+
+      xlab(NULL) +
+      ylab("Word Frequency")+
+      coord_flip()
+
+``` 
+\
+\
+
+At this stage, it's notable that "son" emerges as the most frequently mentioned word for females, followed by "husband" and "daughter." This suggests that for women, the presence and relationship with their sons hold significant importance in their happiness. Additionally, the continued presence of their husbands and daughters remains crucial sources of joy.
+
+However, for males, "wife" takes the top spot as the most frequently mentioned word, followed by "friend" and "family." Interestingly, while the presence of children is still significant, it appears that men derive their primary happiness from their spouses, friends, and broader family connections.
+
+\
+\
+
+## Conlusion
+
+We have gained some interesting insights in exploring the happy moments experienced by individuals across three different life stages – being single, married, and stepping into parenthood. Across all stages, the importance of relationships in fostering happiness is obvious. Friendships are widely valued, while romantic partnerships play a significant role, especially during marriage. Parenthood brings a new perspective, with women often finding joy in their relationships with their children, while men may prioritize their connections with their spouses and broader social circles.
+
+\
+\
+\
+
+
+
